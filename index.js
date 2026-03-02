@@ -10,6 +10,7 @@ import announcementRoutes from './routes/announcements.js';
 import notificationRoutes from './routes/notifications.js';
 import studentRoutes from './routes/students.js';
 import adminRoutes from './routes/admin.js';
+import chatRoutes from './routes/chat.js';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -33,6 +34,7 @@ app.use('/api/announcements', announcementRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/students', studentRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/chat', chatRoutes);
 
 // 404 handler
 app.use((_req, res) => res.status(404).json({ error: 'Route not found' }));
