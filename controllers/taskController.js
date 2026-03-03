@@ -161,10 +161,10 @@ export async function createTask(req, res) {
   return res.status(201).json(task);
 }
 
-// PUT /api/tasks/:id — admin: edit task
+// PUT /api/tasks/:id — admin: edit task + update assignments
 export async function updateTask(req, res) {
   const { id } = req.params;
-  const { title, description, deadline, reference_image_url } = req.body;
+  const { title, description, deadline, reference_image_url, student_ids } = req.body;
 
   const { data, error } = await supabase
     .from('tasks')
@@ -175,6 +175,43 @@ export async function updateTask(req, res) {
 
   if (error) return res.status(500).json({ error: 'Server error' });
   if (!data) return res.status(404).json({ error: 'Task not found' });
+
+  // Update assignments if student_ids provided
+  if (Array.isArray(student_ids)) {
+    // Get current assignments
+    const { data: existing } = await supabase
+      .from('task_assignments')
+      .select('student_id')
+      .eq('task_id', id);
+
+    const currentIds = (existing || []).map(a => a.student_id);
+    const toAdd = student_ids.filter(sid => !currentIds.includes(sid));
+    const toRemove = currentIds.filter(sid => !student_ids.includes(sid));
+
+    if (toRemove.length > 0) {
+      await supabase
+        .from('task_assignments')
+        .delete()
+        .eq('task_id', id)
+        .in('student_id', toRemove);
+    }
+
+    if (toAdd.length > 0) {
+      await supabase
+        .from('task_assignments')
+        .insert(toAdd.map(sid => ({ task_id: id, student_id: sid })));
+
+      // Notify newly assigned students
+      await createNotificationsForStudents({
+        studentIds: toAdd,
+        type: 'task_assigned',
+        title: `New task: ${title}`,
+        body: `Deadline: ${new Date(deadline).toLocaleDateString()}`,
+        referenceId: id,
+        referenceType: 'task',
+      });
+    }
+  }
 
   return res.json(data);
 }
