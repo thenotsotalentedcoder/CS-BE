@@ -12,6 +12,9 @@ export async function getAnnouncements(req, res) {
     .order('created_at', { ascending: false });
 
   if (role === 'student') {
+    const { domain, group } = req.user;
+    query = query.or(`target_domain.eq.all,target_domain.eq.${domain}`);
+    // We also need to handle the group within that domain
     query = query.or(`target_group.eq.all,target_group.eq.${group}`);
   }
 
@@ -22,15 +25,21 @@ export async function getAnnouncements(req, res) {
 
 // POST /api/announcements — admin: create announcement
 export async function createAnnouncement(req, res) {
-  const { title, body, target_group } = req.body;
+  const { title, body, target_group, target_domain } = req.body;
 
-  if (!title || !body || !target_group) {
-    return res.status(400).json({ error: 'title, body, and target_group are required' });
+  if (!title || !body || !target_group || !target_domain) {
+    return res.status(400).json({ error: 'title, body, target_group, and target_domain are required' });
   }
 
   const { data, error } = await supabase
     .from('announcements')
-    .insert({ title, body, target_group })
+    .insert({ 
+      title, 
+      body, 
+      target_domain: target_domain || 'all', 
+      target_group: target_group || 'all',
+      created_by: req.user.id
+    })
     .select()
     .single();
 
@@ -48,6 +57,7 @@ export async function createAnnouncement(req, res) {
 
   // Email notifications
   let studentQuery = supabase.from('users').select('email, full_name').eq('role', 'student');
+  if (target_domain !== 'all') studentQuery = studentQuery.eq('domain', target_domain);
   if (target_group !== 'all') studentQuery = studentQuery.eq('group', target_group);
   const { data: students } = await studentQuery;
 
@@ -65,11 +75,11 @@ export async function createAnnouncement(req, res) {
 // PUT /api/announcements/:id
 export async function updateAnnouncement(req, res) {
   const { id } = req.params;
-  const { title, body, target_group } = req.body;
+  const { title, body, target_group, target_domain } = req.body;
 
   const { data, error } = await supabase
     .from('announcements')
-    .update({ title, body, target_group })
+    .update({ title, body, target_group, target_domain })
     .eq('id', id)
     .select()
     .single();

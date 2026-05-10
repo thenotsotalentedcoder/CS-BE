@@ -9,6 +9,11 @@ import {
   deleteTask,
   getAssignableStudents,
 } from '../controllers/taskController.js';
+import {
+  getTaskMessages,
+  sendTaskMessage,
+  getUnreadCounts,
+} from '../controllers/taskMessageController.js';
 
 const router = Router();
 
@@ -22,5 +27,10 @@ router.get('/:id', requireAuth, getTaskById);
 router.post('/', requireAuth, requireAdmin, createTask);
 router.put('/:id', requireAuth, requireAdmin, updateTask);
 router.delete('/:id', requireAuth, requireAdmin, deleteTask);
+
+// Discussion routes
+router.get('/:taskId/messages', requireAuth, getTaskMessages);
+router.post('/:taskId/messages', requireAuth, sendTaskMessage);
+router.get('/:taskId/unread-counts', requireAuth, getUnreadCounts);
 
 export default router;

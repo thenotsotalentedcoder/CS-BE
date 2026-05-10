@@ -2,27 +2,34 @@ import { supabase } from '../lib/supabase.js';
 
 // GET /api/admin/stats
 export async function getDashboardStats(_req, res) {
-  const [groupCounts, activeTasks, pendingReviews, lateSubmissions] = await Promise.all([
-    // Students per group
-    supabase.from('users').select('group').eq('role', 'student').not('group', 'is', null),
+  const [userRecords, activeTasks, pendingReviews, lateSubmissions] = await Promise.all([
+    // All students with their domain and group
+    supabase.from('users').select('domain, group').eq('role', 'student'),
 
-    // Active tasks (deadline in future)
+    // Active tasks
     supabase.from('tasks').select('id', { count: 'exact' }).gte('deadline', new Date().toISOString()),
 
     // Submissions pending review
     supabase.from('submissions').select('id', { count: 'exact' }).eq('status', 'submitted'),
 
-    // Late submissions not yet reviewed
+    // Late submissions details
     supabase.from('submissions').select('id, task_id, student_id, submitted_at, tasks(title), users(full_name, email)').eq('is_late', true).eq('status', 'submitted'),
   ]);
 
-  const groups = { A: 0, B: 0, C: 0 };
-  for (const s of groupCounts.data || []) {
-    if (s.group) groups[s.group]++;
+  // Breakdown students by domain and group
+  const stats = {
+    webdev: { A: 0, B: 0 },
+    ai: { A: 0, B: 0, C: 0 }
+  };
+
+  for (const s of userRecords.data || []) {
+    if (s.domain && s.group && stats[s.domain]) {
+      stats[s.domain][s.group] = (stats[s.domain][s.group] || 0) + 1;
+    }
   }
 
   return res.json({
-    students_per_group: groups,
+    students_breakdown: stats,
     active_tasks: activeTasks.count ?? 0,
     pending_reviews: pendingReviews.count ?? 0,
     late_submissions: lateSubmissions.data ?? [],
@@ -32,8 +39,8 @@ export async function getDashboardStats(_req, res) {
 // GET /api/admin/allowlist
 export async function getAllowlist(_req, res) {
   const { data, error } = await supabase
-    .from('allowed_emails')
-    .select('id, email, imported_at')
+    .from('allowlist')
+    .select('*')
     .order('imported_at', { ascending: false });
 
   if (error) return res.status(500).json({ error: 'Server error' });
@@ -41,22 +48,23 @@ export async function getAllowlist(_req, res) {
 }
 
 // POST /api/admin/allowlist/import
-// Body: { emails: ["a@b.com", "c@d.com", ...] }
-// Frontend parses the CSV and sends the array
+// Body: { users: [{ email: "a@b.com", role: "student", domain: "ai", group: "A" }, ...] }
 export async function importAllowlist(req, res) {
-  const { emails } = req.body;
+  const { users } = req.body;
 
-  if (!Array.isArray(emails) || !emails.length) {
-    return res.status(400).json({ error: 'emails array is required' });
+  if (!Array.isArray(users) || !users.length) {
+    return res.status(400).json({ error: 'users array is required' });
   }
 
-  const normalised = [...new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean))];
+  const rows = users.map((u) => ({
+    email: u.email.trim().toLowerCase(),
+    role: u.role || 'student',
+    domain: u.domain,
+    group: u.group
+  }));
 
-  const rows = normalised.map((email) => ({ email }));
-
-  // upsert — skip duplicates
   const { data, error } = await supabase
-    .from('allowed_emails')
+    .from('allowlist')
     .upsert(rows, { onConflict: 'email', ignoreDuplicates: true })
     .select();
 
@@ -64,30 +72,29 @@ export async function importAllowlist(req, res) {
 
   return res.json({
     imported: data?.length ?? 0,
-    skipped: normalised.length - (data?.length ?? 0),
-    total_sent: normalised.length,
+    total_sent: users.length,
   });
 }
 
 // PATCH /api/admin/users/:id/role
 export async function updateUserRole(req, res) {
   const { id } = req.params;
-  const { role } = req.body;
+  const { role, domain, group } = req.body;
 
-  if (!['admin', 'student'].includes(role)) {
-    return res.status(400).json({ error: 'role must be admin or student' });
-  }
+  const updates = {};
+  if (role) updates.role = role;
+  if (domain) updates.domain = domain;
+  if (group) updates.group = group;
 
-  // Prevent demoting yourself
-  if (id === req.user.id) {
-    return res.status(400).json({ error: 'Cannot change your own role' });
+  if (id === req.user.id && role && role !== 'admin') {
+    return res.status(400).json({ error: 'Cannot demote yourself' });
   }
 
   const { data, error } = await supabase
     .from('users')
-    .update({ role })
+    .update(updates)
     .eq('id', id)
-    .select('id, full_name, email, role')
+    .select('id, full_name, email, role, domain, group')
     .single();
 
   if (error || !data) return res.status(404).json({ error: 'User not found' });
@@ -96,14 +103,19 @@ export async function updateUserRole(req, res) {
 
 // POST /api/admin/allowlist — single email add
 export async function addAllowedEmail(req, res) {
-  const { email } = req.body;
+  const { email, role, domain, group } = req.body;
   if (!email) return res.status(400).json({ error: 'email is required' });
 
   const normalised = email.trim().toLowerCase();
 
   const { error } = await supabase
-    .from('allowed_emails')
-    .insert({ email: normalised });
+    .from('allowlist')
+    .insert({ 
+      email: normalised, 
+      role: role || 'student', 
+      domain, 
+      group 
+    });
 
   if (error?.code === '23505') {
     return res.status(409).json({ error: 'Email already in allowlist' });

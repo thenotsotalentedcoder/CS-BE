@@ -18,10 +18,10 @@ export async function requireAuth(req, res, next) {
       issuer: `${process.env.SUPABASE_URL}/auth/v1`,
     });
 
-    // Fetch the user row to get role, group, skill_level
+    // Fetch the user row to get role, group, domain
     const { data: user, error } = await supabase
       .from('users')
-      .select('id, email, full_name, role, group, skill_level')
+      .select('id, email, full_name, role, group, domain')
       .eq('id', payload.sub)
       .single();
 

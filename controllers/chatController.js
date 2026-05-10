@@ -1,229 +1,161 @@
 import { supabase } from '../lib/supabase.js';
 import { generateContent } from '../lib/gemini.js';
 
-const GROUP_DESC = {
-  A: 'Beginner track — HTML/CSS fundamentals',
-  B: 'Intermediate track — JavaScript and DOM',
-  C: 'Advanced track — Full-stack MERN',
+const TRACKS = {
+  webdev: {
+    name: 'Web Development',
+    groups: {
+      A: 'Foundations — HTML, CSS, and basic JS',
+      B: 'Core — MERN Stack (MongoDB, Express, React, Node)',
+    }
+  },
+  ai: {
+    name: 'Artificial Intelligence',
+    groups: {
+      A: 'Essentials — Python Fundamentals, OOP, and Data Structures',
+      B: 'Machine Learning — Scikit-learn, Regression, and Classification',
+      C: 'Generative AI — LLMs, Prompt Engineering, and FastAPI',
+    }
+  }
 };
 
-const SUMMARIZE_EVERY = 10; // messages since last summary
+const SUMMARIZE_EVERY = 10;
 
 async function buildSystemPrompt(user) {
   const userId = user.id;
   const group = user.group;
+  const domain = user.domain || 'webdev';
 
-  // Fetch tasks + submissions in parallel with announcements + resources
+  // Fetch contextual data in parallel
   const [assignmentsRes, announcementsRes, resourcesRes] = await Promise.all([
     supabase
       .from('task_assignments')
-      .select('tasks(id, title, deadline)')
+      .select('tasks(id, title, description, deadline, domain, group)')
       .eq('student_id', userId),
     supabase
       .from('announcements')
-      .select('title, body, target_group, created_at')
-      .or(`target_group.eq.all,target_group.eq.${group}`)
+      .select('title, body, target_domain, created_at')
+      .or(`target_domain.eq.all,target_domain.eq.${domain}`)
       .order('created_at', { ascending: false })
-      .limit(10),
+      .limit(5),
     supabase
       .from('resources')
-      .select('title, type, category, url')
-      .or(`target_group.eq.all,target_group.eq.${group}`)
-      .order('created_at', { ascending: false }),
+      .select('title, type, category, url, domain')
+      .or(`domain.eq.all,domain.eq.${domain}`)
+      .order('created_at', { ascending: false })
+      .limit(10),
   ]);
 
   const taskIds = (assignmentsRes.data || []).map(a => a.tasks.id);
-
   const { data: submissions } = taskIds.length > 0
-    ? await supabase
-        .from('submissions')
-        .select('task_id, status, is_late, submitted_at, feedback_text, reviewed_at')
-        .eq('student_id', userId)
-        .in('task_id', taskIds)
+    ? await supabase.from('submissions').select('*').eq('student_id', userId).in('task_id', taskIds)
     : { data: [] };
 
-  const submissionMap = Object.fromEntries(
-    (submissions || []).map(s => [s.task_id, s])
-  );
+  const submissionMap = Object.fromEntries((submissions || []).map(s => [s.task_id, s]));
+  const tasks = (assignmentsRes.data || []).map(a => ({ ...a.tasks, submission: submissionMap[a.tasks.id] || null }));
 
-  const tasks = (assignmentsRes.data || []).map(a => ({
-    ...a.tasks,
-    submission: submissionMap[a.tasks.id] || null,
-  }));
-
-  // Format tasks
   const now = new Date();
-  const tasksText = tasks.length === 0
-    ? 'No tasks assigned yet.'
-    : tasks.map(t => {
-        const deadline = new Date(t.deadline);
-        const isPast = deadline < now;
-        const sub = t.submission;
-        let status = 'Not submitted';
-        if (sub) {
-          if (sub.status === 'reviewed') status = `Reviewed${sub.feedback_text ? ` — Feedback: "${sub.feedback_text}"` : ''}`;
-          else if (sub.is_late) status = 'Submitted (late)';
-          else status = 'Submitted, awaiting review';
-        }
-        return `- "${t.title}" | Deadline: ${deadline.toDateString()}${isPast ? ' (past)' : ''} | Status: ${status}`;
-      }).join('\n');
+  const tasksText = tasks.length === 0 ? 'No tasks assigned yet.' : tasks.map(t => {
+    const deadline = new Date(t.deadline);
+    const sub = t.submission;
+    let status = sub ? (sub.status === 'reviewed' ? `Reviewed (Feedback: "${sub.feedback_text}")` : 'Submitted') : 'Not submitted';
+    return `- "${t.title}"\n  Description: ${t.description || 'No description provided'}\n  Track: ${t.domain} | Deadline: ${deadline.toDateString()} | Status: ${status}`;
+  }).join('\n\n');
 
-  // Format announcements
-  const announcementsText = (announcementsRes.data || []).length === 0
-    ? 'No announcements.'
-    : (announcementsRes.data || []).map(a =>
-        `- [${new Date(a.created_at).toDateString()}] "${a.title}": ${a.body}`
-      ).join('\n');
+  const trackInfo = TRACKS[domain] || TRACKS.webdev;
+  const groupInfo = trackInfo.groups[group] || group;
 
-  // Format resources
-  const resourcesText = (resourcesRes.data || []).length === 0
-    ? 'No resources available.'
-    : (resourcesRes.data || []).map(r =>
-        `- ${r.title} (${r.type}${r.category ? `, ${r.category}` : ''}): ${r.url}`
-      ).join('\n');
+  return `You are Kernel, an AI assistant and mentor at ColdStart — an elite technical accelerator.
+Current Domain: ${trackInfo.name}
+Student Track: ${groupInfo}
 
-  return `You are Kernel, an AI assistant embedded in ColdStart — a private web development learning platform.
-You are talking to a specific student. Be helpful, concise, and direct.
-You can discuss anything — general topics, coding help, platform questions — you are not restricted to platform data.
-Do NOT greet the student at the start of every reply. Only greet if this is clearly the very first message in the conversation (no prior history). Respond naturally as if continuing an ongoing chat.
-Format your replies using markdown where appropriate (bold, lists, code blocks).
+YOUR ROLE:
+You are a technical mentor, NOT a task assigner. Your primary purpose is to assist the student with the tasks assigned to them by the Admin/Platform (listed in the "Current Tasks" section below). 
+
+DO NOT assign new tasks. DO NOT create your own curriculum. 
+If a student asks for a task, tell them to check their dashboard for platform-assigned tasks.
+Your value is in explaining concepts, debugging code, and providing architectural guidance for THEIR existing tasks.
+
+YOUR PERSONA:
+If the domain is Web Development, act as a Senior Full-Stack Architect.
+If the domain is Artificial Intelligence, act as a Lead Machine Learning Engineer.
+Always be professional, concise, and technically accurate. Don't greet every time.
 
 == Student Profile ==
 Name: ${user.full_name}
-Group: ${group} — ${GROUP_DESC[group] || group}
-Skill level: ${user.skill_level || 'not set'}
+Domain: ${trackInfo.name}
+Group: ${user.group} (${groupInfo})
 
-== Assigned Tasks ==
+== Current Tasks ==
 ${tasksText}
 
-== Recent Announcements ==
-${announcementsText}
+== Latest Announcements ==
+${(announcementsRes.data || []).map(a => `- ${a.title}: ${a.body}`).join('\n') || 'None yet.'}
 
-== Available Resources ==
-${resourcesText}
+== Track Resources ==
+${(resourcesRes.data || []).map(r => `- ${r.title} (${r.type}): ${r.url}`).join('\n') || 'None yet.'}
 
 Today's date: ${now.toDateString()}`;
 }
 
-// GET /api/chat/history
-export async function getChatHistory(req, res) {
-  const { data, error } = await supabase
-    .from('chat_messages')
-    .select('id, role, content, created_at')
-    .eq('user_id', req.user.id)
-    .order('created_at', { ascending: true });
-
-  if (error) return res.status(500).json({ error: 'Server error' });
-  return res.json(data || []);
-}
-
-// POST /api/chat
 export async function sendMessage(req, res) {
   const { message } = req.body;
   if (!message?.trim()) return res.status(400).json({ error: 'message is required' });
 
   const userId = req.user.id;
 
-  // Load user row (need chat_summary + chat_message_count)
+  // Load user profile including track data
   const { data: userRow } = await supabase
     .from('users')
-    .select('id, full_name, group, skill_level, chat_summary, chat_message_count')
+    .select('id, full_name, role, domain, group, chat_summary, chat_message_count')
     .eq('id', userId)
     .single();
 
-  if (!userRow?.group) return res.status(403).json({ error: 'No group assigned' });
+  if (!userRow) return res.status(404).json({ error: 'User not found' });
 
   // Save user message
-  await supabase.from('chat_messages').insert({
-    user_id: userId,
-    role: 'user',
-    content: message.trim(),
-  });
+  await supabase.from('chat_messages').insert({ user_id: userId, role: 'user', content: message.trim() });
 
-  // Load recent messages since last summary (up to SUMMARIZE_EVERY)
-  const { data: recentMessages } = await supabase
-    .from('chat_messages')
-    .select('role, content')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-    .limit(SUMMARIZE_EVERY);
-
-  const history = (recentMessages || []).reverse().slice(0, -1); // exclude the message we just saved
-
-  // Build Gemini history format
+  // History logic
+  const { data: recentMessages } = await supabase.from('chat_messages').select('role, content').eq('user_id', userId).order('created_at', { ascending: false }).limit(SUMMARIZE_EVERY);
+  const history = (recentMessages || []).reverse().slice(0, -1);
   const geminiHistory = [];
 
   if (userRow.chat_summary) {
-    geminiHistory.push({
-      role: 'user',
-      parts: [{ text: '[Previous conversation summary]' }],
-    });
-    geminiHistory.push({
-      role: 'model',
-      parts: [{ text: userRow.chat_summary }],
-    });
+    geminiHistory.push({ role: 'user', parts: [{ text: '[Previous summary]' }] });
+    geminiHistory.push({ role: 'model', parts: [{ text: userRow.chat_summary }] });
   }
 
   for (const msg of history) {
-    geminiHistory.push({
-      role: msg.role === 'user' ? 'user' : 'model',
-      parts: [{ text: msg.content }],
-    });
+    geminiHistory.push({ role: msg.role === 'user' ? 'user' : 'model', parts: [{ text: msg.content }] });
   }
 
-  // Build system prompt with fresh context
   const systemPrompt = await buildSystemPrompt(userRow);
-  const fullPrompt = `${systemPrompt}\n\n== User message ==\n${message.trim()}`;
+  const fullPrompt = `${systemPrompt}\n\nUser: ${message.trim()}`;
 
-  let reply;
   try {
-    reply = await generateContent(fullPrompt, geminiHistory);
+    const reply = await generateContent(fullPrompt, geminiHistory);
+    await supabase.from('chat_messages').insert({ user_id: userId, role: 'assistant', content: reply });
+    
+    // Update count & summarize...
+    const newCount = (userRow.chat_message_count || 0) + 2;
+    await supabase.from('users').update({ chat_message_count: newCount }).eq('id', userId);
+
+    return res.json({ reply });
   } catch (err) {
-    console.error('Gemini error:', err.message);
-    return res.status(503).json({ error: 'AI unavailable, please try again shortly' });
+    console.error('Kernel Error:', err);
+    return res.status(503).json({ error: 'Kernel is temporarily offline' });
   }
-
-  // Save assistant reply
-  await supabase.from('chat_messages').insert({
-    user_id: userId,
-    role: 'assistant',
-    content: reply,
-  });
-
-  // Update message count
-  const newCount = (userRow.chat_message_count || 0) + 2; // user + assistant
-  await supabase.from('users').update({ chat_message_count: newCount }).eq('id', userId);
-
-  // Summarization checkpoint — every SUMMARIZE_EVERY messages
-  if (newCount % SUMMARIZE_EVERY === 0) {
-    try {
-      const { data: toSummarize } = await supabase
-        .from('chat_messages')
-        .select('role, content')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(SUMMARIZE_EVERY);
-
-      const block = (toSummarize || []).reverse()
-        .map(m => `${m.role === 'user' ? 'Student' : 'Kernel'}: ${m.content}`)
-        .join('\n');
-
-      const summaryPrompt = `Summarize this conversation in 4-6 sentences. Preserve key topics discussed, questions asked, and conclusions or advice given.\n\n${block}`;
-      const summary = await generateContent(summaryPrompt);
-
-      await supabase.from('users').update({ chat_summary: summary }).eq('id', userId);
-    } catch {
-      // Summarization failure is non-critical, continue
-    }
-  }
-
-  return res.json({ reply });
 }
 
-// DELETE /api/chat/history
+export async function getChatHistory(req, res) {
+  const { data, error } = await supabase.from('chat_messages').select('id, role, content, created_at').eq('user_id', req.user.id).order('created_at', { ascending: true });
+  if (error) return res.status(500).json({ error: 'Server error' });
+  return res.json(data || []);
+}
+
 export async function clearHistory(req, res) {
-  const userId = req.user.id;
-  await supabase.from('chat_messages').delete().eq('user_id', userId);
-  await supabase.from('users').update({ chat_summary: null, chat_message_count: 0 }).eq('id', userId);
+  await supabase.from('chat_messages').delete().eq('user_id', req.user.id);
+  await supabase.from('users').update({ chat_summary: null, chat_message_count: 0 }).eq('id', req.user.id);
   return res.json({ message: 'History cleared' });
 }

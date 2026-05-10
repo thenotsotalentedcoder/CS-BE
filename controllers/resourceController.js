@@ -21,8 +21,10 @@ export async function getStudentResources(req, res) {
     .select('id, title, type, url, target_group, is_public, category, subtitle, created_at')
     .order('created_at', { ascending: false });
 
-  // Admin sees all resources; students only see their group + global
+  // Admin sees all resources; students only see their domain/group + global
   if (role !== 'admin') {
+    const { domain, group } = req.user;
+    query = query.or(`domain.eq.all,domain.eq.${domain}`);
     query = query.or(`target_group.eq.all,target_group.eq.${group}`);
   }
 
@@ -43,14 +45,24 @@ export async function getStudentResources(req, res) {
 }
 
 export async function createResource(req, res) {
-  const { title, type, url, target_group, is_public, category, subtitle } = req.body;
+  const { title, type, url, target_group, domain, is_public, category, subtitle } = req.body;
   if (!title || !type || !url || !target_group) {
     return res.status(400).json({ error: 'title, type, url, and target_group are required' });
   }
 
   const { data, error } = await supabase
     .from('resources')
-    .insert({ title, type, url, target_group, is_public: !!is_public, category: category || 'misc', subtitle: subtitle || null })
+    .insert({ 
+      title, 
+      type, 
+      url, 
+      target_group, 
+      domain: domain || 'all', 
+      is_public: !!is_public, 
+      category: category || 'misc', 
+      subtitle: subtitle || null,
+      created_by: req.user.id 
+    })
     .select()
     .single();
 
@@ -73,11 +85,11 @@ export async function createResource(req, res) {
 
 export async function updateResource(req, res) {
   const { id } = req.params;
-  const { title, type, url, target_group, is_public, category, subtitle } = req.body;
+  const { title, type, url, target_group, domain, is_public, category, subtitle } = req.body;
 
   const { data, error } = await supabase
     .from('resources')
-    .update({ title, type, url, target_group, is_public, category: category || 'misc', subtitle: subtitle || null })
+    .update({ title, type, url, target_group, domain, is_public, category: category || 'misc', subtitle: subtitle || null })
     .eq('id', id)
     .select()
     .single();

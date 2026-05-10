@@ -1,7 +1,7 @@
 import { supabase } from '../lib/supabase.js';
 
 // POST /api/auth/check-email
-// Checks if email exists in allowed_emails table
+// Checks if email exists in allowlist table
 export async function checkEmail(req, res) {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'Email is required' });
@@ -9,12 +9,15 @@ export async function checkEmail(req, res) {
   const normalised = email.trim().toLowerCase();
 
   const { data, error } = await supabase
-    .from('allowed_emails')
-    .select('id')
+    .from('allowlist')
+    .select('email')
     .eq('email', normalised)
     .maybeSingle();
 
-  if (error) return res.status(500).json({ error: 'Server error' });
+  if (error) {
+    console.error('CheckEmail Error:', error);
+    return res.status(500).json({ error: 'Server error' });
+  }
 
   return res.json({ allowed: !!data });
 }
@@ -29,18 +32,18 @@ export async function signup(req, res) {
 
   const normalised = email.trim().toLowerCase();
 
-  // Double-check allowlist (don't trust client-side check alone)
-  const { data: allowed } = await supabase
-    .from('allowed_emails')
-    .select('id')
+  // 1. Get user data from allowlist
+  const { data: allowed, error: allowError } = await supabase
+    .from('allowlist')
+    .select('role, domain, "group"')
     .eq('email', normalised)
     .maybeSingle();
 
-  if (!allowed) {
+  if (allowError || !allowed) {
     return res.status(403).json({ error: 'This email is not enrolled. Contact the admin.' });
   }
 
-  // Create Auth user
+  // 2. Create Auth user
   const { data: authData, error: authError } = await supabase.auth.admin.createUser({
     email: normalised,
     password,
@@ -54,15 +57,18 @@ export async function signup(req, res) {
     return res.status(500).json({ error: authError.message });
   }
 
-  // Insert users row
+  // 3. Insert users row with data from allowlist
   const { error: dbError } = await supabase.from('users').insert({
     id: authData.user.id,
     email: normalised,
     full_name: full_name.trim(),
-    role: 'student',
+    role: allowed.role,
+    domain: allowed.domain,
+    group: allowed.group
   });
 
   if (dbError) {
+    console.error('DB Insert Error:', dbError);
     // Auth user created but DB insert failed — clean up Auth user
     await supabase.auth.admin.deleteUser(authData.user.id);
     return res.status(500).json({ error: 'Account creation failed. Please try again.' });

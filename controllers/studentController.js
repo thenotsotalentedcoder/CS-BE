@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase.js';
 export async function getAllStudents(_req, res) {
   const { data, error } = await supabase
     .from('users')
-    .select('id, full_name, email, group, skill_level, created_at')
+    .select('id, full_name, email, domain, group, created_at')
     .eq('role', 'student')
     .order('full_name');
 
@@ -18,7 +18,7 @@ export async function getStudentProfile(req, res) {
 
   const { data: student, error } = await supabase
     .from('users')
-    .select('id, full_name, email, role, group, skill_level, created_at')
+    .select('id, full_name, email, role, domain, group, created_at')
     .eq('id', id)
     .eq('role', 'student')
     .single();
@@ -66,29 +66,7 @@ export async function assignGroup(req, res) {
     .update({ group })
     .eq('id', id)
     .eq('role', 'student')
-    .select('id, full_name, group, skill_level')
-    .single();
-
-  if (error || !data) return res.status(404).json({ error: 'Student not found' });
-  return res.json(data);
-}
-
-// PATCH /api/students/:id/skill-level
-export async function assignSkillLevel(req, res) {
-  const { id } = req.params;
-  const { skill_level } = req.body;
-
-  const validLevels = ['beginner', 'basic', 'intermediate'];
-  if (!validLevels.includes(skill_level)) {
-    return res.status(400).json({ error: 'skill_level must be beginner, basic, or intermediate' });
-  }
-
-  const { data, error } = await supabase
-    .from('users')
-    .update({ skill_level })
-    .eq('id', id)
-    .eq('role', 'student')
-    .select('id, full_name, group, skill_level')
+    .select('id, full_name, group')
     .single();
 
   if (error || !data) return res.status(404).json({ error: 'Student not found' });

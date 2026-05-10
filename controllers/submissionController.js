@@ -112,6 +112,7 @@ export async function reviewSubmission(req, res) {
       feedback_image_url: feedback_image_url || null,
       status: 'reviewed',
       reviewed_at: new Date().toISOString(),
+      reviewed_by: req.user.id,
     })
     .eq('id', id)
     .select('*, tasks(title), users(id, email, full_name)')
