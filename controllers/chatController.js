@@ -27,7 +27,7 @@ async function buildSystemPrompt(user) {
   const domain = user.domain || 'webdev';
 
   // Fetch contextual data in parallel
-  const [assignmentsRes, announcementsRes, resourcesRes] = await Promise.all([
+  const [assignmentsRes, announcementsRes, resourcesRes, taskMessagesRes] = await Promise.all([
     supabase
       .from('task_assignments')
       .select('tasks(id, title, description, deadline, domain, group)')
@@ -44,7 +44,19 @@ async function buildSystemPrompt(user) {
       .or(`domain.eq.all,domain.eq.${domain}`)
       .order('created_at', { ascending: false })
       .limit(10),
+    supabase
+      .from('task_messages')
+      .select('content, sender_id, created_at, tasks(title)')
+      .eq('student_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(15),
   ]);
+
+  const discussionMessages = (taskMessagesRes.data || []).reverse();
+  const discussionText = discussionMessages.length === 0 ? 'No private discussions yet.' : discussionMessages.map(m => {
+    const sender = m.sender_id === userId ? 'Student' : 'Mentor';
+    return `[Task: ${m.tasks?.title}] ${sender}: ${m.content}`;
+  }).join('\n');
 
   const taskIds = (assignmentsRes.data || []).map(a => a.tasks.id);
   const { data: submissions } = taskIds.length > 0
@@ -91,6 +103,9 @@ ${tasksText}
 
 == Latest Announcements ==
 ${(announcementsRes.data || []).map(a => `- ${a.title}: ${a.body}`).join('\n') || 'None yet.'}
+
+== Task Discussions with Mentor ==
+${discussionText}
 
 == Track Resources ==
 ${(resourcesRes.data || []).map(r => `- ${r.title} (${r.type}): ${r.url}`).join('\n') || 'None yet.'}
