@@ -68,7 +68,7 @@ export async function getTaskSubmissions(req, res) {
 
   const { data, error } = await supabase
     .from('submissions')
-    .select('*, users(id, full_name, email)')
+    .select('*, users!student_id(id, full_name, email)')
     .eq('task_id', taskId)
     .order('submitted_at', { ascending: false });
 
@@ -82,7 +82,7 @@ export async function getSubmission(req, res) {
 
   const { data, error } = await supabase
     .from('submissions')
-    .select('*, users(id, full_name, email)')
+    .select('*, users!student_id(id, full_name, email)')
     .eq('id', id)
     .single();
 
@@ -115,7 +115,7 @@ export async function reviewSubmission(req, res) {
       reviewed_by: req.user.id,
     })
     .eq('id', id)
-    .select('*, tasks(title), users(id, email, full_name)')
+    .select('*, tasks(title), users!student_id(id, email, full_name)')
     .single();
 
   if (error || !data) return res.status(404).json({ error: 'Submission not found' });
